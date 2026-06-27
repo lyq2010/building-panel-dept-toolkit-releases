@@ -1,1 +1,5 @@
-# building-panel-dept-toolkit-releases
+# 建筑板部工具箱发布仓库
+
+这是 **建筑板部工具箱 / Building Panel Dept Toolkit** 的公开发布仓库，仅用于托管安装包、便携包、更新清单与发布说明。
+
+源码与业务脚本不在本仓库公开发布。

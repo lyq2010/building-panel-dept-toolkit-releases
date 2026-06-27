@@ -1,0 +1,609 @@
+name: Release
+
+# 公开发版仓库负责构建与发布，避免私有开发仓库消耗私有 Actions 额度。
+# 推同名 tag 到本仓库或手动 dispatch 后，会拉取私有开发仓库对应 tag 进行构建。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要构建并发布的开发仓库 tag（如 v2.1.4）"
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  SOURCE_REPO: lyq2010/packing-list-desktop
+  SKILLS_REPO: lyq2010/jx-skills
+  GITEE_REPO: lyq2010/building-panel-dept-toolkit-releases
+
+permissions:
+  contents: write
+
+jobs:
+  validate-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 生成私有源码只读 token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: packing-list-desktop,jx-skills
+          permission-contents: read
+      - name: 校验发布 tag
+        env:
+          GH_TOKEN: ${{ steps.source-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "发布 tag 格式无效：${RELEASE_TAG}（应为 v主版本.次版本.修订号）"
+            exit 1
+          }
+          gh api "repos/${SOURCE_REPO}/git/ref/tags/${RELEASE_TAG}" >/dev/null
+
+  drift-check:
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: 生成私有源码只读 token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: packing-list-desktop,jx-skills
+          permission-contents: read
+      - name: 拉取开发仓库
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ env.RELEASE_TAG }}
+          path: source
+          token: ${{ steps.source-token.outputs.token }}
+      - name: 拉取 jx-skills
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SKILLS_REPO }}
+          ref: main
+          path: _skill
+          token: ${{ steps.source-token.outputs.token }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: 比对桌面引擎与 skill
+        run: python source/tools/engine_sync.py --check --skill-root _skill
+
+  tests:
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: 生成私有源码只读 token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: packing-list-desktop,jx-skills
+          permission-contents: read
+      - name: 拉取开发仓库
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ env.RELEASE_TAG }}
+          path: source
+          token: ${{ steps.source-token.outputs.token }}
+      - name: 拉取 jx-skills
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SKILLS_REPO }}
+          ref: main
+          path: _skill
+          token: ${{ steps.source-token.outputs.token }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: 安装 Python 依赖
+        working-directory: source
+        run: python -m pip install -r python/requirements.txt
+      - name: skill 领域回归（双版平价 + 冒烟）
+        run: |
+          cd _skill/packing-list-toolkit-win
+          python tests/compare_variants.py
+          python tests/smoke_pipeline.py
+          python tests/smoke_append_backfill.py
+          python tests/smoke_missing_headers.py
+      - name: 桌面 worker 真实业务链测试
+        working-directory: source
+        run: python -m unittest discover -s python/tests
+
+  build-windows:
+    needs: [drift-check, tests]
+    runs-on: windows-latest
+    steps:
+      - name: 生成私有源码只读 token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: packing-list-desktop
+          permission-contents: read
+      - name: 拉取开发仓库
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ env.RELEASE_TAG }}
+          path: source
+          token: ${{ steps.source-token.outputs.token }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: source/src-tauri
+      - name: 注入版本号（以 tag 为准）
+        working-directory: source
+        run: python tools/set_version.py "${{ env.RELEASE_TAG }}"
+      - name: 安装 Python 依赖
+        working-directory: source
+        run: python -m pip install -r python/requirements.txt
+      - name: 从 Secret 生成 MES 地址配置
+        shell: pwsh
+        env:
+          MES_BASE_URL: ${{ secrets.MES_BASE_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:MES_BASE_URL)) {
+            throw "仓库 Actions Secret MES_BASE_URL 未配置，停止构建不可用发布包"
+          }
+          $root = Join-Path $env:GITHUB_WORKSPACE "source"
+          $path = Join-Path $root "python/engine/_mes_config.py"
+          $encoded = $env:MES_BASE_URL.Trim() | ConvertTo-Json -Compress
+          [IO.File]::WriteAllText($path, "BASE_URL = $encoded`n", [Text.UTF8Encoding]::new($false))
+      - name: 构建 Python sidecar
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE "source"
+          python -m PyInstaller --noconfirm --clean --onefile --name packing-worker `
+            --distpath "$root/python/dist" --workpath "$root/python/build" `
+            --add-data "$root/python/engine;engine" `
+            --hidden-import glob --hidden-import copy --hidden-import collections `
+            --hidden-import zipfile --hidden-import urllib.request --hidden-import urllib.parse `
+            "$root/python/worker.py"
+          New-Item -ItemType Directory -Force "$root/src-tauri/binaries" | Out-Null
+          Copy-Item "$root/python/dist/packing-worker.exe" "$root/src-tauri/binaries/packing-worker-x86_64-pc-windows-msvc.exe" -Force
+      - name: 导入代码签名证书
+        shell: pwsh
+        run: |
+          $bytes = [Convert]::FromBase64String("${{ secrets.WINDOWS_CERT_BASE64 }}")
+          $pfx = Join-Path $env:RUNNER_TEMP "code-signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, $bytes)
+          $sec = ConvertTo-SecureString "${{ secrets.WINDOWS_CERT_PASSWORD }}" -AsPlainText -Force
+          Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $sec | Out-Null
+      - name: 安装前端依赖
+        working-directory: source
+        run: npm ci
+      - name: Tauri 构建（含签名 NSIS 安装包 + 更新签名）
+        working-directory: source
+        run: npm run tauri:build -- --bundles nsis
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          PLT_TELEMETRY_URL: https://plt-telemetry.leenbsl.workers.dev/t
+      - name: 组装便携版并整理发布产物（ASCII 名）
+        shell: pwsh
+        run: |
+          $ver  = "${{ env.RELEASE_TAG }}" -replace '^v',''
+          $root = Join-Path $env:GITHUB_WORKSPACE "source"
+          $rel  = "$root/src-tauri/target/release"
+          $stage = "$root/dist-release"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          $pname = "packing-list-toolkit_${ver}_x64_portable"
+          $pdir  = "$root/portable/$pname"
+          New-Item -ItemType Directory -Force $pdir | Out-Null
+          Copy-Item "$rel/packing-list-desktop.exe" "$pdir/建筑板打包单工具箱.exe" -Force
+          Copy-Item "$rel/packing-worker.exe" "$pdir/packing-worker.exe" -Force
+          Copy-Item "$root/packaging/local-code-signing.cer" "$pdir/local-code-signing.cer" -Force
+          Copy-Item "$root/packaging/信任证书（双击运行一次）.bat" $pdir -Force
+          Copy-Item "$root/packaging/portable-README.txt" "$pdir/README.txt" -Force
+          $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object Thumbprint -eq '5E7D39A03527718E8B599FE2716D97C833462465'
+          Set-AuthenticodeSignature -FilePath "$pdir/建筑板打包单工具箱.exe" -Certificate $cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256 | Out-Null
+          Set-AuthenticodeSignature -FilePath "$pdir/packing-worker.exe" -Certificate $cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256 | Out-Null
+          Set-Content -Path "$pdir/portable.flag" -Value $ver -Encoding ascii
+          Compress-Archive -Path "$pdir/*" -DestinationPath "$stage/$pname.zip" -Force
+          $psha = (Get-FileHash "$stage/$pname.zip" -Algorithm SHA256).Hash.ToLower()
+          $setup = Get-ChildItem "$rel/bundle/nsis/*-setup.exe" | Select-Object -First 1
+          Copy-Item $setup.FullName "$stage/packing-list-toolkit_${ver}_x64-setup.exe" -Force
+          $sig = (Get-Content (Get-ChildItem "$rel/bundle/nsis/*-setup.exe.sig" | Select-Object -First 1).FullName -Raw).Trim()
+          $latest = [ordered]@{
+            version  = $ver
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{ "windows-x86_64" = [ordered]@{
+              signature = $sig
+              url = "https://github.com/${{ github.repository }}/releases/download/v${ver}/packing-list-toolkit_${ver}_x64-setup.exe"
+            } }
+            portable = [ordered]@{
+              url = "https://github.com/${{ github.repository }}/releases/download/v${ver}/$pname.zip"
+              sha256 = $psha
+            }
+          } | ConvertTo-Json -Depth 6
+          [IO.File]::WriteAllText("$stage/latest.json", $latest, (New-Object System.Text.UTF8Encoding($false)))
+      - name: 上传 Windows 产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: source/dist-release/*
+
+  build-macos:
+    needs: [drift-check, tests]
+    runs-on: macos-14
+    steps:
+      - name: 生成私有源码只读 token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: packing-list-desktop
+          permission-contents: read
+      - name: 拉取开发仓库
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ env.RELEASE_TAG }}
+          path: source
+          token: ${{ steps.source-token.outputs.token }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: source/src-tauri
+      - name: 注入版本号（以 tag 为准）
+        working-directory: source
+        run: python3 tools/set_version.py "${{ env.RELEASE_TAG }}"
+      - name: 安装 Python 依赖
+        working-directory: source
+        run: python3 -m pip install --break-system-packages -r python/requirements.txt
+      - name: 从 Secret 生成 MES 地址配置
+        working-directory: source
+        env:
+          MES_BASE_URL: ${{ secrets.MES_BASE_URL }}
+        run: |
+          if [ -z "${MES_BASE_URL//[[:space:]]/}" ]; then
+            echo "仓库 Actions Secret MES_BASE_URL 未配置，停止构建不可用发布包" >&2
+            exit 1
+          fi
+          python3 -c 'import os, pathlib; url = os.environ["MES_BASE_URL"].strip(); pathlib.Path("python/engine/_mes_config.py").write_text(f"BASE_URL = {url!r}\n", encoding="utf-8")'
+      - name: 构建 Python sidecar (arm64)
+        working-directory: source
+        run: bash python/build_worker.sh
+      - name: 安装前端依赖
+        working-directory: source
+        run: npm ci
+      - name: Tauri 构建（arm64 dmg + 自动更新包，未做 Apple 公证）
+        working-directory: source
+        run: npm run tauri:build -- --bundles app,dmg
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          PLT_TELEMETRY_URL: https://plt-telemetry.leenbsl.workers.dev/t
+      - name: 整理发布产物（ASCII 名）
+        working-directory: source
+        run: |
+          set -euo pipefail
+          ver="${RELEASE_TAG#v}"
+          mkdir -p dist-release
+          dmg=$(ls src-tauri/target/release/bundle/dmg/*.dmg | head -1)
+          cp "$dmg" "dist-release/packing-list-toolkit_${ver}_arm64.dmg"
+          tgz=$(ls src-tauri/target/release/bundle/macos/*.app.tar.gz | head -1)
+          cp "$tgz" "dist-release/packing-list-toolkit_${ver}_aarch64.app.tar.gz"
+          cp "$tgz.sig" "dist-release/packing-list-toolkit_${ver}_aarch64.app.tar.gz.sig"
+      - name: 上传 macOS 产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: source/dist-release/*
+
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 生成私有源码只读 token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: packing-list-desktop
+          permission-contents: read
+      - name: 拉取开发仓库
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ env.RELEASE_TAG }}
+          path: source
+          token: ${{ steps.source-token.outputs.token }}
+      - name: 从 CHANGELOG 提取当前版本说明
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          version = os.environ["RELEASE_TAG"].lstrip("v")
+          text = Path("source/CHANGELOG.md").read_text(encoding="utf-8")
+          heading = re.search(rf"(?m)^##\s+{re.escape(version)}(?:\s+-[^\n]*)?$", text)
+          if not heading:
+              raise SystemExit(f"CHANGELOG.md 缺少版本章节: {version}")
+          following = text[heading.end():]
+          next_heading = re.search(r"(?m)^##\s+", following)
+          end = heading.end() + (next_heading.start() if next_heading else len(following))
+          notes = text[heading.start():end].strip() + "\n"
+          Path("release-notes.md").write_text(notes, encoding="utf-8")
+          print(notes)
+          PY
+      - name: 下载所有产物
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+      - name: 补全 latest.json 的 macOS 更新条目
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG}"; ver="${tag#v}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
+          sig_file="artifacts/macos/packing-list-toolkit_${ver}_aarch64.app.tar.gz.sig"
+          tar_url="${base}/packing-list-toolkit_${ver}_aarch64.app.tar.gz"
+          python3 - "$sig_file" "$tar_url" <<'PY'
+          import json, sys
+          from pathlib import Path
+          sig = Path(sys.argv[1]).read_text(encoding="utf-8").strip()
+          if not sig:
+              raise SystemExit("macOS 更新签名为空")
+          manifest = Path("artifacts/windows/latest.json")
+          data = json.loads(manifest.read_text(encoding="utf-8"))
+          data["platforms"]["darwin-aarch64"] = {"signature": sig, "url": sys.argv[2]}
+          manifest.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+          print(json.dumps(data, ensure_ascii=False, indent=2))
+          PY
+      - name: 发布前校验本地产物
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG}"; ver="${tag#v}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
+          python3 - "$ver" "$base" <<'PY'
+          import hashlib, json, sys
+          from pathlib import Path
+          ver, base = sys.argv[1:]
+          manifest_path = Path("artifacts/windows/latest.json")
+          data = json.loads(manifest_path.read_text(encoding="utf-8"))
+          if data.get("version") != ver:
+              raise SystemExit(f"latest.json 版本不一致: {data.get('version')} != {ver}")
+          expected = {
+              "windows-x86_64": f"{base}/packing-list-toolkit_{ver}_x64-setup.exe",
+              "darwin-aarch64": f"{base}/packing-list-toolkit_{ver}_aarch64.app.tar.gz",
+          }
+          for platform, url in expected.items():
+              item = data.get("platforms", {}).get(platform, {})
+              if item.get("url") != url or not item.get("signature"):
+                  raise SystemExit(f"{platform} 更新条目无效")
+          portable = Path(f"artifacts/windows/packing-list-toolkit_{ver}_x64_portable.zip")
+          portable_meta = data.get("portable", {})
+          if portable_meta.get("url") != f"{base}/{portable.name}":
+              raise SystemExit("便携包 URL 不一致")
+          if hashlib.sha256(portable.read_bytes()).hexdigest().lower() != str(portable_meta.get("sha256", "")).lower():
+              raise SystemExit("便携包 SHA256 不一致")
+          required = [
+              Path(f"artifacts/windows/packing-list-toolkit_{ver}_x64-setup.exe"),
+              Path(f"artifacts/macos/packing-list-toolkit_{ver}_arm64.dmg"),
+              Path(f"artifacts/macos/packing-list-toolkit_{ver}_aarch64.app.tar.gz"),
+              Path(f"artifacts/macos/packing-list-toolkit_{ver}_aarch64.app.tar.gz.sig"),
+          ]
+          missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]
+          if missing:
+              raise SystemExit("缺少发布产物: " + ", ".join(missing))
+          PY
+      - name: 创建草稿 Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          draft: true
+          files: |
+            artifacts/windows/*
+            artifacts/macos/*
+          body_path: release-notes.md
+      - name: 校验草稿 Release 资产并公开
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG}"
+          rm -rf release-verify
+          mkdir release-verify
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir release-verify
+          while IFS= read -r source; do
+            target="release-verify/$(basename "$source")"
+            [ -f "$target" ] || { echo "缺少草稿资产: $target"; exit 1; }
+            cmp "$source" "$target" || { echo "草稿资产内容不一致: $target"; exit 1; }
+          done < <(find artifacts -type f -print)
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  r2-mirror:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+      - name: 上传产物到 R2（并生成指向 R2 的 latest.json）
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          base="https://plt-releases.leenbsl.workers.dev"
+          newver="${RELEASE_TAG#v}"
+          oldver="$(curl -fsSL "$base/latest.json" 2>/dev/null | python3 -c 'import sys,json;print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)"
+          echo "R2 旧版本: ${oldver:-(无)}，本次发布: $newver"
+          for f in artifacts/windows/* artifacts/macos/*; do
+            [ -f "$f" ] || continue
+            bn=$(basename "$f")
+            [ "$bn" = latest.json ] && continue
+            npx wrangler r2 object put "packing-list-releases/$bn" --file "$f" --remote
+            echo "  -> $bn"
+          done
+          curl -fsSL -o gh-latest.json \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/latest.json"
+          python3 - "$base" <<'PY'
+          import json, sys
+          from pathlib import Path
+          from urllib.parse import urlparse
+          base = sys.argv[1]
+          data = json.loads(Path("gh-latest.json").read_text(encoding="utf-8"))
+          def swap(url):
+              return f"{base}/{Path(urlparse(url).path).name}"
+          for plat in data.get("platforms", {}).values():
+              if plat.get("url"):
+                  plat["url"] = swap(plat["url"])
+          if data.get("portable", {}).get("url"):
+              data["portable"]["url"] = swap(data["portable"]["url"])
+          Path("r2-latest.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+          print(json.dumps(data, ensure_ascii=False, indent=2))
+          PY
+          npx wrangler r2 object put "packing-list-releases/latest.json" \
+            --file r2-latest.json \
+            --content-type "application/json; charset=utf-8" \
+            --remote
+          if [ -n "$oldver" ] && [ "$oldver" != "$newver" ]; then
+            for suf in _x64-setup.exe _x64_portable.zip _arm64.dmg _aarch64.app.tar.gz _aarch64.app.tar.gz.sig; do
+              key="packing-list-toolkit_${oldver}${suf}"
+              npx wrangler r2 object delete "packing-list-releases/$key" --remote 2>/dev/null || true
+            done
+          fi
+          echo "R2 镜像完成"
+
+  gitee-mirror:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: 下载已发布的 GitHub Release 产物与说明
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG}"
+          mkdir -p gitee-assets
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir gitee-assets
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body -q .body > notes.md || echo "$tag" > notes.md
+          ls -la gitee-assets
+      - name: 同步到 Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, json, os, sys, urllib.error, urllib.parse, urllib.request, uuid
+          from pathlib import Path
+          token = os.environ["GITEE_TOKEN"]
+          owner, repo = os.environ["GITEE_REPO"].split("/", 1)
+          tag = os.environ["RELEASE_TAG"]; ver = tag[1:] if tag.startswith("v") else tag
+          API = "https://gitee.com/api/v5"
+          API_TIMEOUT, UPLOAD_TIMEOUT = 60, 1800
+          def api(method, path, *, form=None, query=None):
+              q = dict(query or {}); q["access_token"] = token
+              url = f"{API}{path}?{urllib.parse.urlencode(q)}"
+              data = urllib.parse.urlencode(form).encode() if form is not None else None
+              req = urllib.request.Request(url, data=data, method=method)
+              if data is not None:
+                  req.add_header("Content-Type", "application/x-www-form-urlencoded")
+              try:
+                  with urllib.request.urlopen(req, timeout=API_TIMEOUT) as r:
+                      body = r.read().decode("utf-8")
+                      return r.status, (json.loads(body) if body.strip() else None)
+              except urllib.error.HTTPError as e:
+                  return e.code, e.read().decode("utf-8", "replace")
+          def dl_url(obj):
+              for k in ("browser_download_url", "download_url", "url"):
+                  if isinstance(obj, dict) and obj.get(k):
+                      return obj[k]
+              sys.exit(f"无法从 Gitee 响应取下载链接: {str(obj)[:300]}")
+          def upload_asset(release_id, filepath):
+              boundary = uuid.uuid4().hex
+              fname = os.path.basename(filepath)
+              pre = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; '
+                     f'filename="{fname}"\r\nContent-Type: application/octet-stream\r\n\r\n')
+              body = pre.encode() + Path(filepath).read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+              url = f"{API}/repos/{owner}/{repo}/releases/{release_id}/attach_files?" + urllib.parse.urlencode({"access_token": token})
+              last = None
+              for attempt in range(1, 4):
+                  try:
+                      req = urllib.request.Request(url, data=body, method="POST")
+                      req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+                      with urllib.request.urlopen(req, timeout=UPLOAD_TIMEOUT) as r:
+                          return json.loads(r.read())
+                  except Exception as e:
+                      last = e
+                      print(f"  第 {attempt} 次上传失败: {type(e).__name__}: {e}", flush=True)
+              raise last
+          def get_release():
+              st, body = api("GET", f"/repos/{owner}/{repo}/releases/tags/{tag}")
+              return body if (st == 200 and isinstance(body, dict) and body.get("id")) else None
+          rel = get_release()
+          if rel is None:
+              notes = (Path("notes.md").read_text(encoding="utf-8").strip() if Path("notes.md").exists() else "") or tag
+              status, body = api("POST", f"/repos/{owner}/{repo}/releases", form={
+                  "tag_name": tag, "name": tag, "body": notes,
+                  "prerelease": "false", "target_commitish": "master"})
+              print(f"创建 Gitee Release: {status} {str(body)[:200]}")
+              rel = body if (status in (200, 201) and isinstance(body, dict) and body.get("id")) else get_release()
+              if rel is None:
+                  sys.exit(f"建/取 Gitee Release 失败: {status} {body}")
+          release_id = rel["id"]
+          gitee_url = {a["name"]: dl_url(a) for a in (rel.get("assets") or []) if a.get("name")}
+          data = json.loads(Path("gitee-assets/latest.json").read_text(encoding="utf-8"))
+          assets = [p for p in sorted(Path("gitee-assets").glob("*")) if p.is_file() and p.name != "latest.json"]
+          for p in assets:
+              if p.name in gitee_url:
+                  print(f"已存在，跳过: {p.name}", flush=True); continue
+              print(f"上传中: {p.name} ({p.stat().st_size // 1024} KB) ...", flush=True)
+              gitee_url[p.name] = dl_url(upload_asset(release_id, str(p)))
+              print(f"  -> {gitee_url[p.name]}", flush=True)
+          def swap(u):
+              name = u.rsplit("/", 1)[-1]
+              if name not in gitee_url:
+                  sys.exit(f"Gitee 缺少资产对应 URL: {name}")
+              return gitee_url[name]
+          for plat in data.get("platforms", {}).values():
+              plat["url"] = swap(plat["url"])
+          if data.get("portable", {}).get("url"):
+              data["portable"]["url"] = swap(data["portable"]["url"])
+          manifest = json.dumps(data, ensure_ascii=False, indent=2)
+          path = "updater/latest.json"
+          form = {"content": base64.b64encode(manifest.encode("utf-8")).decode(),
+                  "message": f"更新自动更新清单到 {ver}", "branch": "master"}
+          status, cur = api("GET", f"/repos/{owner}/{repo}/contents/{path}", query={"ref": "master"})
+          if status == 200 and isinstance(cur, dict) and cur.get("sha"):
+              form["sha"] = cur["sha"]
+              status, res = api("PUT", f"/repos/{owner}/{repo}/contents/{path}", form=form)
+          else:
+              status, res = api("POST", f"/repos/{owner}/{repo}/contents/{path}", form=form)
+          if status not in (200, 201):
+              sys.exit(f"写入 Gitee latest.json 失败: {status} {res}")
+          print(f"Gitee 镜像完成：Release {tag}，镜像 {len(assets)} 个产物 + updater/latest.json")
+          PY
