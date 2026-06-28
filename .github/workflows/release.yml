@@ -566,8 +566,8 @@ jobs:
           PY
 
   gitee-mirror:
-    if: ${{ inputs.mode != 'mirror-only' }}
     needs: release
+    if: ${{ always() && (inputs.mode == 'mirror-only' || needs.release.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
