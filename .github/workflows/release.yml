@@ -34,7 +34,7 @@ env:
   SKILLS_REPO: lyq2010/jx-skills
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate-tag:
@@ -126,9 +126,17 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
       - name: 安装 Python 依赖
         working-directory: source
         run: python -m pip install -r python/requirements.txt
+      - name: 前端单元测试
+        working-directory: source
+        run: |
+          npm ci
+          npm test
       - name: skill 领域回归（双版平价 + 冒烟）
         run: |
           cd _skill/packing-list-toolkit-win
@@ -140,9 +148,35 @@ jobs:
         working-directory: source
         run: python -m unittest discover -s python/tests
 
+  rust-tests:
+    if: ${{ inputs.mode != 'mirror-only' }}
+    needs: validate-tag
+    runs-on: windows-latest
+    steps:
+      - name: 生成私有源码只读 token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: packing-list-desktop
+          permission-contents: read
+      - name: 拉取开发仓库
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ env.RELEASE_TAG }}
+          path: source
+          token: ${{ steps.source-token.outputs.token }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust 单元测试
+        working-directory: source/src-tauri
+        run: cargo test
+
   build-windows:
     if: ${{ inputs.mode != 'mirror-only' }}
-    needs: [drift-check, tests]
+    needs: [drift-check, tests, rust-tests]
     runs-on: windows-latest
     steps:
       - name: 生成私有源码只读 token
@@ -260,7 +294,7 @@ jobs:
 
   build-macos:
     if: ${{ inputs.mode != 'mirror-only' }}
-    needs: [drift-check, tests]
+    needs: [drift-check, tests, rust-tests]
     runs-on: macos-14
     steps:
       - name: 生成私有源码只读 token
@@ -348,6 +382,8 @@ jobs:
     if: ${{ inputs.mode != 'mirror-only' }}
     needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: 生成私有源码只读 token
         id: source-token
