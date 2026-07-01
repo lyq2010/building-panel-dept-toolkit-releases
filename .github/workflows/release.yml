@@ -216,7 +216,7 @@ jobs:
       - name: 安装前端依赖
         working-directory: source
         run: npm ci
-      - name: 注入更新通道（COS + R2 + GitHub）
+      - name: 注入更新通道（COS + R2）
         working-directory: source
         env:
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
@@ -311,7 +311,7 @@ jobs:
       - name: 安装前端依赖
         working-directory: source
         run: npm ci
-      - name: 注入更新通道（COS + R2 + GitHub）
+      - name: 注入更新通道（COS + R2）
         working-directory: source
         env:
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
