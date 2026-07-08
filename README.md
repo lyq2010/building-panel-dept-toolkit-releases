@@ -11,9 +11,10 @@
 | 系统 | 文件 | 说明 |
 |---|---|---|
 | Windows x64 | `packing-list-toolkit_*_x64-setup.exe` | 安装版，支持自动更新 |
-| macOS Apple Silicon | `packing-list-toolkit_*_arm64.dmg` | Apple 芯片 Mac 使用 |
+| macOS Apple Silicon | `packing-list-toolkit_*_arm64.dmg` | Tauri 版，Apple 芯片 Mac 使用 |
+| macOS Apple Silicon 原生版 | `packing-list-toolkit_*_macos-native-arm64.dmg` | SwiftUI 原生版，Apple 芯片 Mac 使用 |
 
-Windows 安装版启动后会自动检查新版本；也可以在「关于」里手动检查。macOS 如遇系统安全提示，按公司内部使用规范手动允许打开。
+Windows 安装版启动后会自动检查新版本；也可以在「关于」里手动检查。macOS Tauri 版支持更新通道，macOS 原生版会检查新版信息并提示下载原生版 DMG。macOS 如遇系统安全提示，按公司内部使用规范手动允许打开。
 
 ## 典型流程
 
@@ -65,8 +66,9 @@ Windows 安装版启动后会自动检查新版本；也可以在「关于」里
 发布产物包括：
 
 - Windows 安装包；
-- macOS DMG；
-- macOS 自动更新包；
+- macOS Tauri 版 DMG；
+- macOS Tauri 自动更新包；
+- macOS SwiftUI 原生版 DMG；
 - `latest.json` 更新清单。
 
 ## 隐私与授权
