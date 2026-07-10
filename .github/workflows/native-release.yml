@@ -1,0 +1,306 @@
+name: Native macOS Release
+
+on:
+  push:
+    tags: ["native-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "原生私有仓源码 tag（如 v3.0.1）"
+        required: true
+        type: string
+      publish:
+        description: "创建公开 Release 并镜像到 COS/R2"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build-native:
+    runs-on: macos-26
+    permissions:
+      contents: write
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      SOURCE_REPO: lyq2010/packing-list-mac-native
+    outputs:
+      source_tag: ${{ steps.tags.outputs.source_tag }}
+      public_tag: ${{ steps.tags.outputs.public_tag }}
+      version: ${{ steps.tags.outputs.version }}
+    steps:
+      - name: Resolve and validate tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            source_tag="${{ inputs.tag }}"
+            public_tag="native-${source_tag}"
+          else
+            public_tag="$GITHUB_REF_NAME"
+            source_tag="${public_tag#native-}"
+          fi
+          [[ "$source_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$public_tag" == "native-${source_tag}" ]]
+          echo "source_tag=$source_tag" | tee -a "$GITHUB_OUTPUT"
+          echo "public_tag=$public_tag" | tee -a "$GITHUB_OUTPUT"
+          echo "version=${source_tag#v}" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Create private source read token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: packing-list-mac-native
+          permission-contents: read
+
+      - name: Checkout native source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ steps.tags.outputs.source_tag }}
+          path: source
+          token: ${{ steps.source-token.outputs.token }}
+
+      - name: Verify Xcode and macOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          swift --version
+          sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
+          sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
+          echo "macOS SDK version: $sdk_version"
+          echo "macOS SDK path: $sdk_path"
+          test "$(xcodebuild -version | sed -n 's/^Xcode //p')" = "26.6"
+          test "$sdk_version" = "26.5"
+
+      - name: Set native version
+        working-directory: source
+        run: python3 scripts/set-version.py "${{ steps.tags.outputs.source_tag }}"
+
+      - name: Test native app
+        working-directory: source
+        run: swift test
+
+      - name: Package native app and DMG
+        working-directory: source
+        env:
+          RELEASE_TAG: ${{ steps.tags.outputs.source_tag }}
+          MES_BASE_URL: ${{ secrets.MES_BASE_URL }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          LAUNCHER_PRODUCTION_URL: ${{ secrets.LAUNCHER_PRODUCTION_URL }}
+          LAUNCHER_OA_URL: ${{ secrets.LAUNCHER_OA_URL }}
+          LAUNCHER_ACADEMY_URL: ${{ secrets.LAUNCHER_ACADEMY_URL }}
+          LAUNCHER_EMAIL_URL: ${{ secrets.LAUNCHER_EMAIL_URL }}
+        run: ./scripts/package-macos.sh
+
+      - name: Verify package and linked SDK
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="dist/建筑板部原生工具箱.app"
+          binary="$app/Contents/MacOS/建筑板部工具箱"
+          resources="$app/Contents/Resources"
+          test -x "$binary"
+          test -x "$resources/packing-worker-aarch64-apple-darwin"
+          test -s "$resources/zcool-kuaile-subset.ttf"
+          test -s "$resources/mes-base-url.txt"
+          test -s "$resources/launcher-urls.json"
+          grep -q '/latest-native.json' "$resources/native-update-manifest-urls.txt"
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
+          /usr/bin/vtool -show-build "$binary" | tee "$RUNNER_TEMP/lc-build-version.txt"
+          grep -Eq 'platform[[:space:]]+MACOS' "$RUNNER_TEMP/lc-build-version.txt"
+          grep -Eq 'minos[[:space:]]+14\.0' "$RUNNER_TEMP/lc-build-version.txt"
+          grep -Eq 'sdk[[:space:]]+26\.5' "$RUNNER_TEMP/lc-build-version.txt"
+
+      - name: Stage public native release
+        working-directory: source
+        env:
+          PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-stage
+          dmg="dist/packing-list-toolkit_${VERSION}_macos-native-arm64.dmg"
+          cp "$dmg" release-stage/
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          tag = os.environ["PUBLIC_TAG"]
+          name = f"packing-list-toolkit_{version}_macos-native-arm64.dmg"
+          base = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{tag}"
+          data = {
+              "version": version,
+              "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": {
+                  "darwin-aarch64-native": {
+                      "url": f"{base}/{name}"
+                  }
+              }
+          }
+          Path("release-stage/latest-native.json").write_text(
+              json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(data, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Create draft native Release
+        if: github.event_name == 'push' || inputs.publish
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tags.outputs.public_tag }}
+          name: Native macOS ${{ steps.tags.outputs.version }}
+          draft: true
+          make_latest: false
+          files: source/release-stage/*
+          body: SwiftUI 原生 macOS 版 ${{ steps.tags.outputs.version }}。
+
+      - name: Verify and publish native Release
+        if: github.event_name == 'push' || inputs.publish
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir release-verify
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir release-verify
+          for source in release-stage/*; do
+            target="release-verify/$(basename "$source")"
+            test -s "$target"
+            cmp "$source" "$target"
+          done
+          gh release edit "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+
+  cos-native-mirror:
+    needs: build-native
+    if: ${{ needs.build-native.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download native Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.build-native.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s assets/latest-native.json
+
+      - name: Mirror native release to COS
+        env:
+          VERSION: ${{ needs.build-native.outputs.version }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
+          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user cos-python-sdk-v5
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.request
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from qcloud_cos import CosConfig, CosS3Client
+
+          base = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
+          if "://" not in base:
+              base = f"https://{base}"
+          parsed = urlparse(base)
+          if parsed.scheme != "https" or not parsed.netloc:
+              sys.exit(f"COS_PUBLIC_BASE_URL is invalid: {base}")
+          prefix = parsed.path.strip("/")
+          key = lambda name: f"{prefix}/{name}" if prefix else name
+
+          client = CosS3Client(CosConfig(
+              Region=os.environ["TENCENT_COS_REGION"].strip(),
+              SecretId=os.environ["TENCENT_COS_SECRET_ID"].strip(),
+              SecretKey=os.environ["TENCENT_COS_SECRET_KEY"].strip(),
+              Scheme="https",
+          ))
+          bucket = os.environ["TENCENT_COS_BUCKET"].strip()
+          manifest = json.loads(Path("assets/latest-native.json").read_text(encoding="utf-8"))
+          item = manifest["platforms"]["darwin-aarch64-native"]
+          dmg = Path(urlparse(item["url"]).path).name
+          dmg_path = Path("assets") / dmg
+          if not dmg_path.is_file():
+              sys.exit(f"Missing native DMG: {dmg_path}")
+          client.upload_file(Bucket=bucket, LocalFilePath=str(dmg_path), Key=key(dmg), EnableMD5=False)
+          item["url"] = f"{base}/{dmg}"
+          body = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+          client.put_object(Bucket=bucket, Body=body, Key=key("latest-native.json"), ContentType="application/json; charset=utf-8")
+          with urllib.request.urlopen(f"{base}/latest-native.json?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
+              published = json.loads(response.read().decode("utf-8"))
+          if published.get("version") != os.environ["VERSION"]:
+              sys.exit("COS latest-native.json version mismatch")
+          print("COS native mirror complete")
+          PY
+
+  r2-native-mirror:
+    needs: build-native
+    if: ${{ needs.build-native.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download native Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.build-native.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s assets/latest-native.json
+
+      - name: Mirror native release to R2
+        env:
+          VERSION: ${{ needs.build-native.outputs.version }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          R2_BUCKET: packing-list-releases
+          R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
+        run: |
+          set -euo pipefail
+          account_id="$(
+            curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              https://api.cloudflare.com/client/v4/accounts |
+            python3 -c 'import json, sys; data=json.load(sys.stdin); accounts=data.get("result") or []; assert data.get("success") and accounts; print(accounts[0]["id"])'
+          )"
+          export CLOUDFLARE_ACCOUNT_ID="$account_id"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from urllib.parse import urlparse
+
+          base = os.environ["R2_PUBLIC_BASE_URL"].strip().rstrip("/")
+          manifest_path = Path("assets/latest-native.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          item = manifest["platforms"]["darwin-aarch64-native"]
+          dmg = Path(urlparse(item["url"]).path).name
+          item["url"] = f"{base}/{dmg}"
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          print(dmg)
+          PY
+          dmg="packing-list-toolkit_${VERSION}_macos-native-arm64.dmg"
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${dmg}" --file "assets/${dmg}" --remote
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-native.json" --file assets/latest-native.json --content-type "application/json; charset=utf-8" --remote
+          curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-native.json?verify=${GITHUB_RUN_ID}" |
+            python3 -c 'import json, os, sys; data=json.load(sys.stdin); assert data.get("version") == os.environ["VERSION"]'
+          echo "R2 native mirror complete"

@@ -6,13 +6,13 @@
 
 ## 下载
 
-到 [Releases 最新版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/latest) 下载：
+旧版 Windows/Tauri 到 [Releases 最新版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/latest) 下载；SwiftUI 原生版到 [Native Releases](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases?q=native-v) 下载：
 
 | 系统 | 文件 | 说明 |
 |---|---|---|
 | Windows x64 | `packing-list-toolkit_*_x64-setup.exe` | 安装版，支持自动更新 |
 | macOS Apple Silicon | `packing-list-toolkit_*_arm64.dmg` | Tauri 版，Apple 芯片 Mac 使用 |
-| macOS Apple Silicon 原生版 | `packing-list-toolkit_*_macos-native-arm64.dmg` | SwiftUI 原生版，Apple 芯片 Mac 使用 |
+| macOS Apple Silicon 原生版 | `packing-list-toolkit_*_macos-native-arm64.dmg` | 独立 `native-v*` Release，Apple 芯片 Mac 使用 |
 
 Windows 安装版启动后会自动检查新版本；也可以在「关于」里手动检查。macOS Tauri 版支持更新通道，macOS 原生版会检查新版信息并提示下载原生版 DMG。macOS 如遇系统安全提示，按公司内部使用规范手动允许打开。
 
@@ -61,15 +61,22 @@ Windows 安装版启动后会自动检查新版本；也可以在「关于」里
 
 ## 自动更新
 
-安装版使用 COS 和 R2 双更新通道。GitHub Releases 是人工下载页；自动更新会优先读取发布通道的 `latest.json`。
+安装版使用 COS 和 R2 双更新通道。GitHub Releases 是人工下载页；Windows/Tauri 自动更新读取 `latest.json`，SwiftUI 原生版读取独立的 `latest-native.json`。
 
 发布产物包括：
 
 - Windows 安装包；
 - macOS Tauri 版 DMG；
 - macOS Tauri 自动更新包；
-- macOS SwiftUI 原生版 DMG；
-- `latest.json` 更新清单。
+- `latest.json`：Windows/Tauri 更新清单；
+- macOS SwiftUI 原生版 DMG（独立 `native-v*` Release）；
+- `latest-native.json`：SwiftUI 原生版更新清单。
+
+## 发布标签
+
+- 旧版源码仓和公开 Release 使用 `vX.Y.Z`。
+- 原生私有源码仓独立使用 `vX.Y.Z`，从 `v3.0.1` 开始。
+- 原生公开 Release 使用对应的 `native-vX.Y.Z`，例如私有仓 `v3.0.1` 对应公开仓 `native-v3.0.1`。
 
 ## 隐私与授权
 
