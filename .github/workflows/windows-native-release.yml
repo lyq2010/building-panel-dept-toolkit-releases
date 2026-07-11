@@ -222,7 +222,8 @@ jobs:
           $name = "packing-list-toolkit_${env:VERSION}_windows-native-x64-setup.exe"
           Copy-Item -LiteralPath "artifacts/installer/$name" -Destination "$stage/$name" -Force
           $base = "https://github.com/${{ github.repository }}/releases/download/$env:PUBLIC_TAG"
-          python tools/make_update_manifest.py --version $env:VERSION --installer "$stage/$name" --base-url $base --certificate-thumbprint $env:CERTIFICATE_THUMBPRINT --output "$stage/latest-windows-native.json"
+          python tools/release_notes.py --version $env:VERSION --output artifacts/release-notes.md
+          python tools/make_update_manifest.py --version $env:VERSION --installer "$stage/$name" --base-url $base --certificate-thumbprint $env:CERTIFICATE_THUMBPRINT --notes-file artifacts/release-notes.md --output "$stage/latest-windows-native.json"
 
       - name: Create draft Windows native Release
         if: github.event_name == 'push' || inputs.publish
@@ -233,7 +234,7 @@ jobs:
           draft: true
           make_latest: false
           files: source/release-stage/*
-          body: Windows 11 原生版 ${{ steps.tags.outputs.version }}。
+          body_path: source/artifacts/release-notes.md
 
       - name: Verify and publish Windows native Release
         if: github.event_name == 'push' || inputs.publish
