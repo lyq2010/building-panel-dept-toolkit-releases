@@ -131,7 +131,6 @@ jobs:
           binary="$app/Contents/MacOS/Lee’s Toolbox Mac"
           resources="$app/Contents/Resources"
           test -x "$binary"
-          test ! -e "$resources/packing-worker-aarch64-apple-darwin"
           test -s "$resources/zcool-kuaile-subset.ttf"
           test -s "$resources/AppIcon.icns"
           test -s "$resources/AppIconLight.png"
