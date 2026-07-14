@@ -1,4 +1,4 @@
-name: Native macOS Release
+name: Lee’s Toolbox Mac Release
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "原生私有仓源码 tag（如 v3.0.1）"
+        description: "Lee’s Toolbox Mac 源码 tag（如 v3.0.6）"
         required: true
         type: string
       publish:
@@ -25,7 +25,7 @@ jobs:
       contents: write
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-      SOURCE_REPO: lyq2010/packing-list-mac-native
+      SOURCE_REPO: lyq2010/lees-toolbox-mac
     outputs:
       source_tag: ${{ steps.tags.outputs.source_tag }}
       public_tag: ${{ steps.tags.outputs.public_tag }}
@@ -56,7 +56,7 @@ jobs:
           client-id: ${{ secrets.SOURCE_APP_ID }}
           private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
           owner: lyq2010
-          repositories: packing-list-mac-native
+          repositories: lees-toolbox-mac
           permission-contents: read
 
       - name: Checkout native source
@@ -118,7 +118,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          dmg="dist/packing-list-toolkit_${VERSION}_macos-native-arm64.dmg"
+          dmg="dist/Lee’s Toolbox Mac_${VERSION}_macOS_arm64.dmg"
           npm exec --yes --package @tauri-apps/cli@2.11.2 -- tauri signer sign "$dmg"
           test -s "$dmg.sig"
 
@@ -127,15 +127,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app="dist/建筑板部原生工具箱.app"
-          binary="$app/Contents/MacOS/建筑板部工具箱"
+          app="dist/Lee‘s工具箱 Mac.app"
+          binary="$app/Contents/MacOS/Lee’s Toolbox Mac"
           resources="$app/Contents/Resources"
           test -x "$binary"
-          test -x "$resources/packing-worker-aarch64-apple-darwin"
+          test ! -e "$resources/packing-worker-aarch64-apple-darwin"
           test -s "$resources/zcool-kuaile-subset.ttf"
           test -s "$resources/AppIcon.icns"
           test -s "$resources/AppIconLight.png"
           test -s "$resources/AppIconDark.png"
+          test -s "$resources/Assets.car"
+          test -s "$resources/ZIPFoundation_ZIPFoundation.bundle/PrivacyInfo.xcprivacy"
           test -s "$resources/mes-base-url.txt"
           test -s "$resources/launcher-urls.json"
           grep -q '/latest-native.json' "$resources/native-update-manifest-urls.txt"
@@ -153,7 +155,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-stage
-          dmg="dist/packing-list-toolkit_${VERSION}_macos-native-arm64.dmg"
+          dmg="dist/Lee’s Toolbox Mac_${VERSION}_macOS_arm64.dmg"
           cp "$dmg" release-stage/
           cp "$dmg.sig" release-stage/
           python3 - <<'PY'
@@ -165,7 +167,7 @@ jobs:
 
           version = os.environ["VERSION"]
           tag = os.environ["PUBLIC_TAG"]
-          name = f"packing-list-toolkit_{version}_macos-native-arm64.dmg"
+          name = f"Lee’s Toolbox Mac_{version}_macOS_arm64.dmg"
           encoded_signature = Path(f"dist/{name}.sig").read_text(encoding="utf-8").strip()
           try:
               signature = base64.b64decode(encoded_signature, validate=True).decode("utf-8").strip()
@@ -221,7 +223,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tags.outputs.public_tag }}
-          name: Native macOS ${{ steps.tags.outputs.version }}
+          name: Lee’s Toolbox Mac ${{ steps.tags.outputs.version }}
           draft: true
           make_latest: false
           files: source/release-stage/*
@@ -307,22 +309,26 @@ jobs:
           client.put_object(Bucket=bucket, Body=body, Key=key("latest-native.json"), ContentType="application/json; charset=utf-8")
 
           current_key = key(dmg)
-          marker = ""
-          while True:
-              kwargs = {"Bucket": bucket, "Prefix": key("packing-list-toolkit_"), "MaxKeys": 1000}
-              if marker:
-                  kwargs["Marker"] = marker
-              listed = client.list_objects(**kwargs)
-              for obj in listed.get("Contents", []) or []:
-                  obj_key = obj.get("Key", "")
-                  if obj_key.endswith("_macos-native-arm64.dmg") and obj_key != current_key:
-                      client.delete_object(Bucket=bucket, Key=obj_key)
-                      print(f"Deleted old native mirror: {obj_key}")
-              if listed.get("IsTruncated") in ("true", True):
-                  marker = listed.get("NextMarker") or ""
+          for object_prefix, suffix in (
+              ("packing-list-toolkit_", "_macos-native-arm64.dmg"),
+              ("Lee’s Toolbox Mac_", "_macOS_arm64.dmg"),
+          ):
+              marker = ""
+              while True:
+                  kwargs = {"Bucket": bucket, "Prefix": key(object_prefix), "MaxKeys": 1000}
                   if marker:
-                      continue
-              break
+                      kwargs["Marker"] = marker
+                  listed = client.list_objects(**kwargs)
+                  for obj in listed.get("Contents", []) or []:
+                      obj_key = obj.get("Key", "")
+                      if obj_key.endswith(suffix) and obj_key != current_key:
+                          client.delete_object(Bucket=bucket, Key=obj_key)
+                          print(f"Deleted old native mirror: {obj_key}")
+                  if listed.get("IsTruncated") in ("true", True):
+                      marker = listed.get("NextMarker") or ""
+                      if marker:
+                          continue
+                  break
 
           with urllib.request.urlopen(f"{base}/latest-native.json?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
               published = json.loads(response.read().decode("utf-8"))
@@ -378,7 +384,7 @@ jobs:
           manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
           print(dmg)
           PY
-          dmg="packing-list-toolkit_${VERSION}_macos-native-arm64.dmg"
+          dmg="Lee’s Toolbox Mac_${VERSION}_macOS_arm64.dmg"
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${dmg}" --file "assets/${dmg}" --remote
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-native.json" --file assets/latest-native.json --content-type "application/json; charset=utf-8" --remote
           python3 - "$account_id" <<'PY'
@@ -391,8 +397,11 @@ jobs:
           account_id = sys.argv[1]
           bucket = os.environ["R2_BUCKET"].strip()
           token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
-          current = f"packing-list-toolkit_{os.environ['VERSION']}_macos-native-arm64.dmg"
-          prefix = "packing-list-toolkit_"
+          current = f"Lee’s Toolbox Mac_{os.environ['VERSION']}_macOS_arm64.dmg"
+          patterns = (
+              ("packing-list-toolkit_", "_macos-native-arm64.dmg"),
+              ("Lee’s Toolbox Mac_", "_macOS_arm64.dmg"),
+          )
 
           def request(method, path, params=None):
               url = f"https://api.cloudflare.com/client/v4{path}"
@@ -409,23 +418,24 @@ jobs:
               f"/accounts/{urllib.parse.quote(account_id, safe='')}"
               f"/r2/buckets/{urllib.parse.quote(bucket, safe='')}/objects"
           )
-          cursor = ""
           stale = []
-          while True:
-              params = {"prefix": prefix, "per_page": "1000"}
-              if cursor:
-                  params["cursor"] = cursor
-              data = request("GET", bucket_path, params)
-              for obj in data.get("result") or []:
-                  key = obj.get("key", "")
-                  if key.endswith("_macos-native-arm64.dmg") and key != current:
-                      stale.append(key)
-              info = data.get("result_info") or {}
-              if not info.get("is_truncated"):
-                  break
-              cursor = info.get("cursor") or ""
-              if not cursor:
-                  raise SystemExit("R2 listing was truncated without a cursor")
+          for prefix, suffix in patterns:
+              cursor = ""
+              while True:
+                  params = {"prefix": prefix, "per_page": "1000"}
+                  if cursor:
+                      params["cursor"] = cursor
+                  data = request("GET", bucket_path, params)
+                  for obj in data.get("result") or []:
+                      key = obj.get("key", "")
+                      if key.endswith(suffix) and key != current:
+                          stale.append(key)
+                  info = data.get("result_info") or {}
+                  if not info.get("is_truncated"):
+                      break
+                  cursor = info.get("cursor") or ""
+                  if not cursor:
+                      raise SystemExit("R2 listing was truncated without a cursor")
 
           for key in stale:
               request("DELETE", f"{bucket_path}/{urllib.parse.quote(key, safe='/')}")
