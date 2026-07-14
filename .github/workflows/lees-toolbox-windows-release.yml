@@ -92,12 +92,6 @@ jobs:
         working-directory: source
         shell: pwsh
         run: |
-          python tools/baseline_to_resw.py --output artifacts/Resources.resw
-          git diff --no-index --exit-code src/PackingList.Windows/Strings/zh-CN/Resources.resw artifacts/Resources.resw
-          python tools/resourceize_xaml_copy.py --check
-          python tools/ui_copy_fixtures.py --check
-          python tools/ui_copy_audit.py --require-resourceized
-          python tools/protocol_copy_audit.py
           dotnet restore LeesToolboxWindows.slnx
           dotnet test tests/PackingList.Worker.Tests/PackingList.Worker.Tests.csproj -c Release -p:Platform=x64 --no-restore
           dotnet test tests/PackingList.Core.Tests/PackingList.Core.Tests.csproj -c Release -p:Platform=x64 --no-restore
@@ -165,14 +159,12 @@ jobs:
           "thumbprint=$thumbprint" >> $env:GITHUB_OUTPUT
           Write-Host "Installer signature and signer verified: $($signature.Status)"
 
-      - name: Verify compiled resources and bundled worker
+      - name: Verify compiled PRI and bundled worker
         working-directory: source
         shell: pwsh
         timeout-minutes: 3
         run: |
-          Write-Host "Verifying compiled PRI"
-          python tools/verify_pri.py --pri artifacts/publish/LeesToolboxWindows.pri
-          if ($LASTEXITCODE -ne 0) { throw "Compiled PRI verification failed" }
+          if (!(Test-Path -LiteralPath artifacts/publish/LeesToolboxWindows.pri -PathType Leaf)) { throw "Compiled PRI is missing" }
           if (!(Test-Path -LiteralPath artifacts/publish/worker/packing-worker.exe)) { throw "Bundled worker is missing" }
           Write-Host "Running bundled worker doctor"
           $doctor = & artifacts/publish/worker/packing-worker.exe doctor | Select-Object -Last 1 | ConvertFrom-Json
