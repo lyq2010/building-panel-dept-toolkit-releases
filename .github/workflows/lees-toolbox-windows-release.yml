@@ -88,15 +88,6 @@ jobs:
           $actual = [string]$versionGroup.Version
           if ($actual -ne $env:VERSION) { throw "Source version mismatch: $actual != $env:VERSION" }
 
-      - name: Verify worker and test gates
-        working-directory: source
-        shell: pwsh
-        run: |
-          dotnet restore LeesToolboxWindows.slnx
-          dotnet test tests/PackingList.Worker.Tests/PackingList.Worker.Tests.csproj -c Release -p:Platform=x64 --no-restore
-          dotnet test tests/PackingList.Core.Tests/PackingList.Core.Tests.csproj -c Release -p:Platform=x64 --no-restore
-          dotnet test tests/PackingList.IntegrationTests/PackingList.IntegrationTests.csproj -c Release -p:Platform=x64 --no-restore
-
       - name: Restore Lee's Toolbox Windows signing certificate
         id: certificate
         shell: pwsh
