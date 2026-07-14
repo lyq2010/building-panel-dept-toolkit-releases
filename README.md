@@ -1,15 +1,15 @@
-# Lee's 工具箱
+# Lee Releases
 
-建筑板 / 冷库板项目概览表桌面工具，可将装箱明细、成品物流、切锯表、下单详情、转账款明细和开票明细整理为项目概览表，并生成汇总、发货和合同收款数据。业务文件只在本机处理。
+Lee 系列桌面工具的公开发布仓，集中提供 Windows 与 macOS 安装包、更新清单和使用说明。
 
 ## 下载与安装
 
 | 系统 | 下载入口 | 安装文件 |
 |---|---|---|
-| Windows x64 | [最新稳定版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/latest) | `packing-list-toolkit_*_x64-setup.exe` |
-| Windows 11 x64 原生版 | [最新稳定版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases) | `lees-toolbox-windows_*_x64-setup.exe` |
-| macOS Apple Silicon | [最新稳定版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/latest) | `packing-list-toolkit_*_arm64.dmg` |
-| macOS Apple Silicon 原生版 | [最新稳定版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/tag/native-v3.0.6) | `Lee’s Toolbox Mac_*_macOS_arm64.dmg` |
+| Windows x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases/latest) | `packing-list-toolkit_*_x64-setup.exe` |
+| Windows 11 x64 原生版 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases) | `lees-toolbox-windows_*_x64-setup.exe` |
+| macOS Apple Silicon | [最新稳定版](https://github.com/lyq2010/lee-releases/releases/latest) | `packing-list-toolkit_*_arm64.dmg` |
+| macOS Apple Silicon 原生版 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases/tag/native-v3.0.6) | `Lee’s Toolbox Mac_*_macOS_arm64.dmg` |
 
 Windows 运行安装程序完成安装。macOS 打开 DMG 后将应用拖入「应用程序」；如系统阻止首次打开，请在「系统设置 → 隐私与安全性」中允许。
 
