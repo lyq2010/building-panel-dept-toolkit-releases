@@ -69,9 +69,6 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.301
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.14'
 
       - name: Install release dependencies
         shell: pwsh
@@ -175,8 +172,39 @@ jobs:
           $name = "lees-toolbox-windows_${env:VERSION}_x64-setup.exe"
           Copy-Item -LiteralPath "artifacts/installer/$name" -Destination "$stage/$name" -Force
           $base = "https://github.com/${{ github.repository }}/releases/download/$env:PUBLIC_TAG"
-          python tools/release_notes.py --version $env:VERSION --output artifacts/release-notes.md
-          python tools/make_update_manifest.py --version $env:VERSION --installer "$stage/$name" --base-url $base --certificate-thumbprint $env:CERTIFICATE_THUMBPRINT --notes-file artifacts/release-notes.md --output "$stage/latest-lees-toolbox-windows.json"
+          $changelog = [IO.File]::ReadAllText('CHANGELOG.md', [Text.Encoding]::UTF8)
+          $escapedVersion = [Text.RegularExpressions.Regex]::Escape($env:VERSION)
+          $match = [Text.RegularExpressions.Regex]::Match(
+            $changelog,
+            "(?ms)^## \[$escapedVersion\][^\r\n]*\r?\n+(.*?)(?=^## \[|\z)"
+          )
+          if (!$match.Success) { throw "Version $env:VERSION not found in CHANGELOG.md" }
+          $notes = $match.Groups[1].Value.Trim()
+          if ([string]::IsNullOrWhiteSpace($notes)) { throw "Version $env:VERSION has no release notes" }
+          [IO.File]::WriteAllText(
+            'artifacts/release-notes.md',
+            $notes + [Environment]::NewLine,
+            [Text.UTF8Encoding]::new($false)
+          )
+
+          $installer = Get-Item -LiteralPath "$stage/$name"
+          $thumbprint = $env:CERTIFICATE_THUMBPRINT -replace '[^0-9A-Fa-f]', ''
+          if ($thumbprint.Length -ne 40) { throw 'Certificate thumbprint must contain 40 hexadecimal characters' }
+          $manifest = [ordered]@{
+            version = $env:VERSION
+            publishedAt = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture)
+            url = "$base/$([Uri]::EscapeDataString($name))"
+            sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName).Hash
+            size = $installer.Length
+            certificateThumbprint = $thumbprint.ToUpperInvariant()
+            notes = $notes
+            platform = 'windows-x86_64'
+          }
+          [IO.File]::WriteAllText(
+            "$stage/latest-lees-toolbox-windows.json",
+            ($manifest | ConvertTo-Json -Depth 3) + [Environment]::NewLine,
+            [Text.UTF8Encoding]::new($false)
+          )
 
       - name: Create draft Lee's Toolbox Windows Release
         if: github.event_name == 'push' || inputs.publish
