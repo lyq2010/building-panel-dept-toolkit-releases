@@ -54,7 +54,7 @@ finally {
 }
 
 try {
-    Add-AppxPackage -LiteralPath $PackagePath -ForceApplicationShutdown -ErrorAction Stop
+    Add-AppxPackage -Path $PackagePath -ForceApplicationShutdown -ErrorAction Stop
 }
 catch {
     if ($certificateAdded) {
