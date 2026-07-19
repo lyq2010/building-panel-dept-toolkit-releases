@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Lee's Mail private source tag (for example v0.1.0.33)"
+        description: "Lee's Mail private source tag (for example v1.0.0)"
         required: true
         type: string
 
@@ -40,11 +40,14 @@ jobs:
             $publicTag = '${{ github.ref_name }}'
             $sourceTag = $publicTag -replace '^lees-mail-', ''
           }
-          if ($sourceTag -notmatch '^v\d+\.\d+\.\d+\.\d+$') { throw "Invalid source tag: $sourceTag" }
+          if ($sourceTag -notmatch '^v\d+\.\d+\.\d+(\.\d+)?$') { throw "Invalid source tag: $sourceTag" }
           if ($publicTag -ne "lees-mail-$sourceTag") { throw "Invalid public tag: $publicTag" }
+          $version = $sourceTag.Substring(1)
+          $packageVersion = if ($version.Split('.').Length -eq 3) { "$version.0" } else { $version }
           "source_tag=$sourceTag" >> $env:GITHUB_OUTPUT
           "public_tag=$publicTag" >> $env:GITHUB_OUTPUT
-          "version=$($sourceTag.Substring(1))" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "package_version=$packageVersion" >> $env:GITHUB_OUTPUT
 
       - name: Create private source read token
         id: source-token
@@ -129,11 +132,11 @@ jobs:
         working-directory: source
         shell: pwsh
         env:
-          VERSION: ${{ steps.tags.outputs.version }}
+          PACKAGE_VERSION: ${{ steps.tags.outputs.package_version }}
         run: |
           [xml]$manifest = Get-Content -Raw -Encoding UTF8 LeesMail.Mail.WinUI/Package.appxmanifest
           $actual = [string]$manifest.Package.Identity.Version
-          if ($actual -ne $env:VERSION) { throw "Source package version mismatch: $actual != $env:VERSION" }
+          if ($actual -ne $env:PACKAGE_VERSION) { throw "Source package version mismatch: $actual != $env:PACKAGE_VERSION" }
 
       - name: Restore .NET projects serially
         working-directory: source
