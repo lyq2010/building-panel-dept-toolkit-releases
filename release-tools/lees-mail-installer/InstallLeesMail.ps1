@@ -4,11 +4,21 @@ param(
     [string]$CertificatePath,
 
     [Parameter(Mandatory = $true)]
-    [string]$PackagePath
+    [string]$PackagePath,
+
+    [Parameter(Mandatory = $true)]
+    [string]$LogPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+trap {
+    $details = ($_ | Out-String).Trim()
+    [System.IO.File]::WriteAllText($LogPath, $details, [System.Text.UTF8Encoding]::new($false))
+    Write-Error $details
+    exit 1
+}
 
 if (-not (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) {
     throw "Lee's Mail signing certificate is missing."

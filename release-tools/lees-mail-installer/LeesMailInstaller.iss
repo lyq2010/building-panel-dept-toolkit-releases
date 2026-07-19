@@ -45,6 +45,8 @@ var
   ResultCode: Integer;
   PowerShellPath: String;
   Parameters: String;
+  InnerLogPath: String;
+  FailureDetails: AnsiString;
 begin
   Result := '';
   ExtractTemporaryFile('LeesMail_CN-Lee.cer');
@@ -52,11 +54,13 @@ begin
   ExtractTemporaryFile('InstallLeesMail.ps1');
 
   PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  InnerLogPath := ExpandConstant('{tmp}\LeesMailInstall.log');
   Parameters :=
     '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
     AddQuotes(ExpandConstant('{tmp}\InstallLeesMail.ps1')) +
     ' -CertificatePath ' + AddQuotes(ExpandConstant('{tmp}\LeesMail_CN-Lee.cer')) +
-    ' -PackagePath ' + AddQuotes(ExpandConstant('{tmp}\LeesMail.msix'));
+    ' -PackagePath ' + AddQuotes(ExpandConstant('{tmp}\LeesMail.msix')) +
+    ' -LogPath ' + AddQuotes(InnerLogPath);
 
   if not Exec(PowerShellPath, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
@@ -65,5 +69,9 @@ begin
   end;
 
   if ResultCode <> 0 then
+  begin
+    if LoadStringFromFile(InnerLogPath, FailureDetails) then
+      Log('Lee''s Mail inner installer failure: ' + FailureDetails);
     Result := Format('Lee''s Mail 安装失败（错误代码 %d）。请查看安装日志。', [ResultCode]);
+  end;
 end;
