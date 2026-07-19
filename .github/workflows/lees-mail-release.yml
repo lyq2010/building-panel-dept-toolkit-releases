@@ -210,6 +210,13 @@ jobs:
           Copy-Item -LiteralPath $package[0].FullName -Destination "$inputDirectory/LeesMail.msix" -Force
           Export-Certificate -Cert "Cert:\CurrentUser\My\$env:CERTIFICATE_THUMBPRINT" -FilePath "$inputDirectory/LeesMail_CN-Lee.cer" -Force | Out-Null
           Copy-Item -LiteralPath ../release-repo/release-tools/lees-mail-installer/InstallLeesMail.ps1 -Destination "$inputDirectory/InstallLeesMail.ps1" -Force
+          $languageFile = "$inputDirectory/ChineseSimplified.isl"
+          $languageUrl = 'https://raw.githubusercontent.com/jrsoftware/issrc/7fc483339b6f5b531eb4c0c504a8026877c9142f/Files/Languages/ChineseSimplified.isl'
+          Invoke-WebRequest -Uri $languageUrl -OutFile $languageFile
+          $languageHash = (Get-FileHash -LiteralPath $languageFile -Algorithm SHA256).Hash
+          if ($languageHash -ne '6753BE2C5E2740D859900FD902824DB2EC568DA5C5B52486524C9762D778B0B0') {
+            throw "Inno Setup Chinese language file hash mismatch: $languageHash"
+          }
 
           $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           $definition = [IO.Path]::GetFullPath('../release-repo/release-tools/lees-mail-installer/LeesMailInstaller.iss')
