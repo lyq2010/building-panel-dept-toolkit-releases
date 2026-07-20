@@ -98,11 +98,14 @@ jobs:
         env:
           OUTLOOK_CLIENT_ID: ${{ secrets.LEESMAIL_OUTLOOK_CLIENT_ID }}
           GMAIL_CLIENT_ID: ${{ secrets.LEESMAIL_GMAIL_CLIENT_ID }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
           SIGNING_PFX_BASE64: ${{ secrets.LEESMAIL_SIGNING_PFX_BASE64 }}
           SIGNING_PFX_PASSWORD: ${{ secrets.LEESMAIL_SIGNING_PFX_PASSWORD }}
         run: |
           if ($env:OUTLOOK_CLIENT_ID -notmatch '^[0-9a-fA-F-]{36}$') { throw 'LEESMAIL_OUTLOOK_CLIENT_ID is missing or malformed' }
           if ($env:GMAIL_CLIENT_ID -notmatch '^[0-9]+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$') { throw 'LEESMAIL_GMAIL_CLIENT_ID is missing or malformed' }
+          $cosUri = $null
+          if (![Uri]::TryCreate($env:COS_PUBLIC_BASE_URL, [UriKind]::Absolute, [ref]$cosUri) -or $cosUri.Scheme -ne 'https') { throw 'COS_PUBLIC_BASE_URL is missing or malformed' }
           if ([string]::IsNullOrWhiteSpace($env:SIGNING_PFX_BASE64)) { throw 'LEESMAIL_SIGNING_PFX_BASE64 is missing' }
           if ([string]::IsNullOrWhiteSpace($env:SIGNING_PFX_PASSWORD)) { throw 'LEESMAIL_SIGNING_PFX_PASSWORD is missing' }
 
@@ -128,13 +131,16 @@ jobs:
         env:
           OUTLOOK_CLIENT_ID: ${{ secrets.LEESMAIL_OUTLOOK_CLIENT_ID }}
           GMAIL_CLIENT_ID: ${{ secrets.LEESMAIL_GMAIL_CLIENT_ID }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
           CERTIFICATE_THUMBPRINT: ${{ steps.certificate.outputs.thumbprint }}
         run: |
+          $cosManifest = "$($env:COS_PUBLIC_BASE_URL.Trim().TrimEnd('/'))/latest-lees-mail.json"
           $content = @"
           <Project>
             <PropertyGroup>
               <LeesMailOutlookClientId>$env:OUTLOOK_CLIENT_ID</LeesMailOutlookClientId>
               <LeesMailGmailClientId>$env:GMAIL_CLIENT_ID</LeesMailGmailClientId>
+              <LeesMailCosUpdateManifestUrl>$cosManifest</LeesMailCosUpdateManifestUrl>
               <PackageCertificateThumbprint>$env:CERTIFICATE_THUMBPRINT</PackageCertificateThumbprint>
             </PropertyGroup>
           </Project>
@@ -213,6 +219,20 @@ jobs:
         working-directory: source
         shell: pwsh
         run: ./scripts/build-private-msix.ps1 -NoRestore -AllowUntrustedForVerification -OutputDirectory artifacts/msix
+
+      - name: Verify COS-first update channel is embedded
+        working-directory: source
+        shell: pwsh
+        env:
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: |
+          $expectedManifest = "$($env:COS_PUBLIC_BASE_URL.Trim().TrimEnd('/'))/latest-lees-mail.json"
+          $assemblyInfo = @(Get-ChildItem LeesMail.Mail.WinUI/obj/x64/Release -Recurse -File -Filter '*AssemblyInfo.cs')
+          if ($assemblyInfo.Count -ne 1) { throw "Expected one generated AssemblyInfo.cs, found $($assemblyInfo.Count)" }
+          $generatedSource = Get-Content -LiteralPath $assemblyInfo[0].FullName -Raw -Encoding UTF8
+          if (!$generatedSource.Contains($expectedManifest, [StringComparison]::Ordinal)) {
+            throw 'Signed build does not contain the configured COS update manifest URL'
+          }
 
       - name: Build and verify Lee's Mail setup
         working-directory: source
@@ -322,12 +342,14 @@ jobs:
           $notes = @"
           # Lee's Mail $env:VERSION
 
-          Windows x64 build of Lee's Mail. Run the signed setup executable; it installs
-          the embedded CN=Lee certificate and MSIX package in one guided operation.
+          Lee's Mail Windows x64 正式版。
+
+          - 修复了一些问题。
+          - 运行已签名的安装程序即可安装证书和 MSIX 软件包。
 
           - SHA-256: ``$hash``
-          - Signing certificate: ``$env:CERTIFICATE_THUMBPRINT``
-          - The corresponding GPL-3.0 source archive is attached.
+          - 签名证书: ``$env:CERTIFICATE_THUMBPRINT``
+          - 已附带对应的 GPL-3.0 源码归档。
           "@
           [IO.File]::WriteAllText('artifacts/release-notes.md', $notes, [Text.UTF8Encoding]::new($false))
           "package_name=$packageName" >> $env:GITHUB_OUTPUT
