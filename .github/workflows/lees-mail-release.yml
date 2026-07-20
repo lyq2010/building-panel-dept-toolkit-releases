@@ -151,11 +151,11 @@ jobs:
           DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: "1"
           MSBUILDDISABLENODEREUSE: "1"
         run: |
-          dotnet restore LeesMail.Core.Tests/LeesMail.Core.Tests.csproj --disable-parallel -p:Platform=x64
+          dotnet restore LeesMail.Core.Tests/LeesMail.Core.Tests.csproj --disable-parallel -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64
           if ($LASTEXITCODE -ne 0) { throw 'Core test restore failed' }
-          dotnet restore LeesMail.Mail.ViewModels.Tests/LeesMail.Mail.ViewModels.Tests.csproj --disable-parallel -p:Platform=x64
+          dotnet restore LeesMail.Mail.ViewModels.Tests/LeesMail.Mail.ViewModels.Tests.csproj --disable-parallel -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64
           if ($LASTEXITCODE -ne 0) { throw 'ViewModel test restore failed' }
-          dotnet restore LeesMail.Mail.WinUI/LeesMail.Mail.WinUI.csproj --disable-parallel -p:Platform=x64 -p:RuntimeIdentifier=win-x64
+          dotnet restore LeesMail.Mail.WinUI/LeesMail.Mail.WinUI.csproj --disable-parallel -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64 -p:RuntimeIdentifier=win-x64
           if ($LASTEXITCODE -ne 0) { throw 'WinUI restore failed' }
 
       - name: Test Lee's Mail core
@@ -164,7 +164,7 @@ jobs:
         env:
           DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: "1"
           MSBUILDDISABLENODEREUSE: "1"
-        run: dotnet test LeesMail.Core.Tests/LeesMail.Core.Tests.csproj -c Release --no-restore -m:1 -p:Platform=x64 --logger "console;verbosity=minimal"
+        run: dotnet test LeesMail.Core.Tests/LeesMail.Core.Tests.csproj -c Release --no-restore -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64 --logger "console;verbosity=minimal"
 
       - name: Test Lee's Mail view models
         working-directory: source
@@ -172,7 +172,7 @@ jobs:
         env:
           DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: "1"
           MSBUILDDISABLENODEREUSE: "1"
-        run: dotnet test LeesMail.Mail.ViewModels.Tests/LeesMail.Mail.ViewModels.Tests.csproj -c Release --no-restore -m:1 -p:Platform=x64 --logger "console;verbosity=minimal"
+        run: dotnet test LeesMail.Mail.ViewModels.Tests/LeesMail.Mail.ViewModels.Tests.csproj -c Release --no-restore -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64 --logger "console;verbosity=minimal"
 
       - name: Audit XAML automation IDs
         working-directory: source
