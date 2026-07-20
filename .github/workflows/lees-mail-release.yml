@@ -104,8 +104,10 @@ jobs:
         run: |
           if ($env:OUTLOOK_CLIENT_ID -notmatch '^[0-9a-fA-F-]{36}$') { throw 'LEESMAIL_OUTLOOK_CLIENT_ID is missing or malformed' }
           if ($env:GMAIL_CLIENT_ID -notmatch '^[0-9]+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$') { throw 'LEESMAIL_GMAIL_CLIENT_ID is missing or malformed' }
+          $cosBase = $env:COS_PUBLIC_BASE_URL.Trim().TrimEnd('/')
+          if (!$cosBase.Contains('://')) { $cosBase = "https://$cosBase" }
           $cosUri = $null
-          if (![Uri]::TryCreate($env:COS_PUBLIC_BASE_URL, [UriKind]::Absolute, [ref]$cosUri) -or $cosUri.Scheme -ne 'https') { throw 'COS_PUBLIC_BASE_URL is missing or malformed' }
+          if (![Uri]::TryCreate($cosBase, [UriKind]::Absolute, [ref]$cosUri) -or $cosUri.Scheme -ne 'https') { throw 'COS_PUBLIC_BASE_URL is missing or malformed' }
           if ([string]::IsNullOrWhiteSpace($env:SIGNING_PFX_BASE64)) { throw 'LEESMAIL_SIGNING_PFX_BASE64 is missing' }
           if ([string]::IsNullOrWhiteSpace($env:SIGNING_PFX_PASSWORD)) { throw 'LEESMAIL_SIGNING_PFX_PASSWORD is missing' }
 
@@ -134,7 +136,9 @@ jobs:
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
           CERTIFICATE_THUMBPRINT: ${{ steps.certificate.outputs.thumbprint }}
         run: |
-          $cosManifest = "$($env:COS_PUBLIC_BASE_URL.Trim().TrimEnd('/'))/latest-lees-mail.json"
+          $cosBase = $env:COS_PUBLIC_BASE_URL.Trim().TrimEnd('/')
+          if (!$cosBase.Contains('://')) { $cosBase = "https://$cosBase" }
+          $cosManifest = "$cosBase/latest-lees-mail.json"
           $content = @"
           <Project>
             <PropertyGroup>
@@ -226,7 +230,9 @@ jobs:
         env:
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
         run: |
-          $expectedManifest = "$($env:COS_PUBLIC_BASE_URL.Trim().TrimEnd('/'))/latest-lees-mail.json"
+          $cosBase = $env:COS_PUBLIC_BASE_URL.Trim().TrimEnd('/')
+          if (!$cosBase.Contains('://')) { $cosBase = "https://$cosBase" }
+          $expectedManifest = "$cosBase/latest-lees-mail.json"
           $assemblyInfo = @(Get-ChildItem LeesMail.Mail.WinUI/obj/x64/Release -Recurse -File -Filter '*AssemblyInfo.cs')
           if ($assemblyInfo.Count -ne 1) { throw "Expected one generated AssemblyInfo.cs, found $($assemblyInfo.Count)" }
           $generatedSource = Get-Content -LiteralPath $assemblyInfo[0].FullName -Raw -Encoding UTF8
